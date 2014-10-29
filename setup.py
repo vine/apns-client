@@ -9,8 +9,8 @@ def read(fname):
     return open(os.path.join(os.path.dirname(__file__), fname)).read()
 
 setup(
-    name='apns-client',
-    version='0.2.1',
+    name='vapns-client',
+    version='0.2.1.1',
     author='Sardar Yumatov',
     author_email='ja.doma@gmail.com',
     url='https://bitbucket.org/sardarnl/apns-client',
