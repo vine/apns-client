@@ -22,9 +22,9 @@ import unittest, struct, pickle, json, datetime
 import six
 import binascii
 
-from apnsclient import Message, Session, APNs
-from apnsclient.apns import Result
-from apnsclient.backends.dummy import Backend as DummyBackend
+from vapnsclient import Message, Session, APNs
+from vapnsclient.apns import Result
+from vapnsclient.backends.dummy import Backend as DummyBackend
 
 
 class Python26Mixin(object):

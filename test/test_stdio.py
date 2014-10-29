@@ -17,7 +17,7 @@ if __name__ == '__main__':
     sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 import unittest, datetime
-from apnsclient import Session
+from vapnsclient import Session
 
 
 CERTIFICATE = b"""-----BEGIN CERTIFICATE-----
@@ -74,7 +74,7 @@ class StdIOBackendTest(Python26Mixin, unittest.TestCase):
     """ Test stdio features. """
 
     def setUp(self):
-        self.session = Session(pool="apnsclient.backends.stdio")
+        self.session = Session(pool="vapnsclient.backends.stdio")
 
     def test_locking(self):
         """ Test thread locking mechanism """

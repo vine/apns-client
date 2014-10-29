@@ -48,7 +48,7 @@ class Session(object):
     # Default timeout waiting for error response at the end message send operation.
     DEFAULT_READ_TAIL_TIMEOUT = 3
     
-    def __init__(self, pool="apnsclient.backends.stdio",
+    def __init__(self, pool="vapnsclient.backends.stdio",
                        connect_timeout=DEFAULT_CONNECT_TIMEOUT,
                        write_buffer_size=DEFAULT_WRITE_BUFFER_SIZE,
                        write_timeout=DEFAULT_WRITE_TIMEOUT,

@@ -10,13 +10,13 @@ def read(fname):
 
 setup(
     name='vapns-client',
-    version='0.2.1.1',
+    version='0.2.1.2',
     author='Sardar Yumatov',
     author_email='ja.doma@gmail.com',
     url='https://bitbucket.org/sardarnl/apns-client',
     description='Python client for Apple Push Notification service (APNs)',
     long_description=read('README.rst'),
-    packages=['apnsclient', 'apnsclient.backends'],
+    packages=['vapnsclient', 'vapnsclient.backends'],
     license="Apache 2.0",
     keywords='apns push notification apple messaging iOS',
     install_requires=['pyOpenSSL', 'six'],
