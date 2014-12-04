@@ -23,7 +23,7 @@ import six
 import binascii
 
 
-__all__ = ('APNs', 'Message', 'Result')
+__all__ = ('APNs', 'SingleTokenPayloadMessage', 'Message', 'GenericMessageGroup', 'Result')
 
 # module level logger, defaults to "apnsclient.apns"
 LOG = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class APNs(object):
 
     def send(self, message):
         """ Send the message.
-        
+
             The method will block until the whole message is sent. The method
             returns :class:`Result` object, which you can examine for possible
             errors and retry attempts.
@@ -98,7 +98,7 @@ class APNs(object):
             not available anymore, probably because application was
             uninstalled. You have to stop sending notifications to that device
             token unless it has been re-registered since reported timestamp.
-            
+
             Unlike sending the message, you should fetch the feedback using
             non-cached connection. Once whole feedback has been read, this
             method will automatically close the connection.
@@ -147,18 +147,79 @@ class APNs(object):
         """ Converts integer timestamp to ``datetime`` object. """
         return datetime.datetime.fromtimestamp(timestamp)
 
+# Default expiry (1 day).
+DEFAULT_EXPIRY = datetime.timedelta(days=1)
+# Default message priority
+DEFAULT_PRIORITY = 10
 
-class Message(object):
-    """ The notification message. """
+class MessageGroup(object):
+    @property
+    def tokens(self):
+        raise NotImplementedError
+
+    def batch(self, packet_size):
+        raise NotImplementedError()
+
+    def retry(self, failed_index, include_failed):
+        raise NotImplementedError()
+
+class SingleTokenPayloadMessage(object):
     # JSON serialization parameters. Assume UTF-8 by default.
     json_parameters = {
         'separators': (',',':'),
         'ensure_ascii': False,
     }
-    # Default expiry (1 day).
-    DEFAULT_EXPIRY = datetime.timedelta(days=1)
-    # Default message priority
-    DEFAULT_PRIORITY = 10
+
+    def __init__(self, token, payload):
+        self.token = token
+        self.payload = payload
+
+    def get_json_payload(self):
+        """ Convert message to JSON payload, acceptable by APNs. Must return byte string. """
+        payload = self.payload
+        if not isinstance(payload, six.string_types) and not isinstance(payload, six.binary_type):
+            payload = json.dumps(payload, **self.json_parameters)
+
+        # in python2 json will output utf-8 encoded str. in python3 json will output
+        # a unicode string. So only for python3 in case of unicode string - encode.
+        if not isinstance(payload, six.binary_type):
+            payload = payload.encode("utf-8")
+
+        return payload
+
+class GenericMessageGroup(MessageGroup):
+    def __init__(self, single_messages, expiry=None, priority=DEFAULT_PRIORITY, **extra_kwargs):
+        self.expiry = expiry
+        self.priority = priority
+        self.messages = single_messages
+
+    @property
+    def tokens(self):
+        return [m.token for m in self.messages]
+
+    def batch(self, packet_size):
+        return CumberBatch(self.messages, self.expiry, self.priority, packet_size)
+
+    def retry(self, failed_index, include_failed):
+        """ Create new retry message with tokens from failed index. """
+        if not include_failed:
+            failed_index += 1
+
+        failed = self.messages[failed_index:]
+        if not failed:
+            # nothing to retry
+            return None
+
+        return GenericMessageGroup(failed, expiry=self.expiry, priority=self.priority)
+
+class Message(MessageGroup):
+    """ The notification message. """
+
+    # JSON serialization parameters. Assume UTF-8 by default.
+    json_parameters = {
+        'separators': (',',':'),
+        'ensure_ascii': False,
+    }
 
     def __init__(self, tokens, alert=None, badge=None, sound=None, content_available=None,
                  expiry=None, payload=None, priority=DEFAULT_PRIORITY, extra=None,
@@ -239,7 +300,7 @@ class Message(object):
         if expiry is None:
             # 0 means do not store messages at all. so we have to choose default
             # expiry, which is here 1 day.
-            expiry = self.DEFAULT_EXPIRY
+            expiry = DEFAULT_EXPIRY
 
         if isinstance(expiry, datetime.timedelta):
             expiry = self._get_current_datetime() + expiry
@@ -259,7 +320,7 @@ class Message(object):
 
             If you use ``pickle``, then simply pickle/unpickle the message object.
             If you use something else, like JSON, then::
-                
+
                 # obtain state dict from message
                 state = message.__getstate__()
                 # send/store the state
@@ -287,7 +348,7 @@ class Message(object):
 
         return dict([(key, getattr(self, key)) for key in ('tokens', 'alert', 'badge',
                     'sound', 'content_available', 'expiry', 'priority', 'extra')])
-    
+
     def __setstate__(self, state):
         """ Overwrite message state with given kwargs. """
         self._tokens = state['tokens']
@@ -327,7 +388,7 @@ class Message(object):
         """ Returns the payload content as a dict or raw ``payload`` argument value. """
         if self._payload is not None:
             return self._payload
-        
+
         # in v.2 protocol no keys are required, but usually you specify
         # alert or content-available.
         aps = {}
@@ -347,7 +408,7 @@ class Message(object):
         ret = {
             'aps': aps,
         }
-        
+
         if self.extra:
             ret.update(self.extra)
 
@@ -386,28 +447,19 @@ class Message(object):
         state['tokens'] = failed
         return Message(**state)
 
-
-class Batch(object):
+class GenericBatch(object):
     """ Binary stream serializer. """
     # Frame version. Do not change unless you update binary formats too.
     VERSION = 2
 
-    def __init__(self, tokens, payload, expiry, priority, packet_size):
-        """ New serializer.
-
-            :Arguments:
-                - tokens (list): list of target target device tokens.
-                - payload (str): JSON payload.
-                - expiry (int): expiry timestamp.
-                - priority (int): message priority.
-                - packet_size (int): minimum chunk size in bytes.
-        """
-        self.tokens = tokens
-        self.payload = payload
+    def __init__(self, expiry, priority, packet_size):
         self.expiry = expiry
         self.priority = priority
         self.packet_size = packet_size
-        
+
+    def get_constructables(self):
+        raise NotImplementedError()
+
     def __iter__(self):
         """ Iterate over serialized chunks. """
         messages = []
@@ -415,14 +467,14 @@ class Batch(object):
         sent = 0
 
         # for all registration ids
-        for idx, token in enumerate(self.tokens):
+        for idx, (token, payload) in enumerate(self.get_constructables()):
             tok = binascii.unhexlify(token)
             # |COMMAND|FRAME-LEN|{token}|{payload}|{id:4}|{expiry:4}|{priority:1}
-            frame_len = 3*5 + len(tok) + len(self.payload) + 4 + 4 + 1 # 5 items, each 3 bytes prefix, then each item length
-            fmt = ">BIBH{0}sBH{1}sBHIBHIBHB".format(len(tok), len(self.payload))
+            frame_len = 3*5 + len(tok) + len(payload) + 4 + 4 + 1 # 5 items, each 3 bytes prefix, then each item length
+            fmt = ">BIBH{0}sBH{1}sBHIBHIBHB".format(len(tok), len(payload))
             message = pack(fmt, self.VERSION, frame_len,
                     1, len(tok), tok,
-                    2, len(self.payload), self.payload,
+                    2, len(payload), payload,
                     3, 4, idx,
                     4, 4, self.expiry,
                     5, 1, self.priority)
@@ -440,6 +492,41 @@ class Batch(object):
         # last small chunk
         if messages:
             yield sent, six.b("").join(messages)
+
+class CumberBatch(GenericBatch):
+    def __init__(self, messages, expiry, priority, packet_size):
+        """ New serializer.
+
+            :Arguments:
+                - messages (list): list of SingleTokenPayloadMessages.
+                - expiry (int): expiry timestamp.
+                - priority (int): message priority.
+                - packet_size (int): minimum chunk size in bytes.
+        """
+        super(CumberBatch, self).__init__(expiry, priority, packet_size)
+        self.messages = messages
+
+    def get_constructables(self):
+        return [(m.token, m.get_json_payload()) for m in self.messages]
+
+
+class Batch(GenericBatch):
+    def __init__(self, tokens, payload, expiry, priority, packet_size):
+        """ New serializer.
+
+            :Arguments:
+                - tokens (list): list of target target device tokens.
+                - payload (str): JSON payload.
+                - expiry (int): expiry timestamp.
+                - priority (int): message priority.
+                - packet_size (int): minimum chunk size in bytes.
+        """
+        super(Batch, self).__init__(expiry, priority, packet_size)
+        self.tokens = tokens
+        self.payload = payload
+
+    def get_constructables(self):
+        return [(token, self.payload) for token in self.tokens]
 
 
 class Result(object):
@@ -545,7 +632,7 @@ class Result(object):
 
     def retry(self):
         """ Returns :class:`Message` with device tokens that can be retried.
-       
+
             Current APNs protocol bails out on first failure, so any device
             token after the failure should be retried. If failure was related
             to the token, then it will appear in :attr:`failed` set and will be
