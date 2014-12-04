@@ -163,6 +163,29 @@ class MessageGroup(object):
     def retry(self, failed_index, include_failed):
         raise NotImplementedError()
 
+    # override if you use funky expiry values
+    def _get_expiry_timestamp(self, expiry):
+        """ Convert expiry value to a timestamp (integer).
+            Provided value can be a date or timedelta.
+        """
+        if expiry is None:
+            # 0 means do not store messages at all. so we have to choose default
+            # expiry, which is here 1 day.
+            expiry = DEFAULT_EXPIRY
+
+        if isinstance(expiry, datetime.timedelta):
+            expiry = self._get_current_datetime() + expiry
+
+        if isinstance(expiry, datetime.datetime):
+            expiry = time.mktime(expiry.timetuple())
+
+        return int(expiry)
+
+    # override if you use funky timezones
+    def _get_current_datetime(self):
+        """ Returns current date and time. """
+        return datetime.datetime.now()
+
 class SingleTokenPayloadMessage(object):
     # JSON serialization parameters. Assume UTF-8 by default.
     json_parameters = {
@@ -189,8 +212,8 @@ class SingleTokenPayloadMessage(object):
 
 class GenericMessageGroup(MessageGroup):
     def __init__(self, single_messages, expiry=None, priority=DEFAULT_PRIORITY, **extra_kwargs):
-        self.expiry = expiry
-        self.priority = priority
+        self.priority = int(priority)  # has to be integer because will be formatted into a binary
+        self.expiry = self._get_expiry_timestamp(expiry)
         self.messages = single_messages
 
     @property
@@ -291,29 +314,6 @@ class Message(MessageGroup):
                 raise ValueError("Extra payload data may not contain 'aps' key.")
         # else: payload provided as unrecognized value, don't init fields,
         # they will raise AttributeError on access
-
-    # override if you use funky expiry values
-    def _get_expiry_timestamp(self, expiry):
-        """ Convert expiry value to a timestamp (integer).
-            Provided value can be a date or timedelta.
-        """
-        if expiry is None:
-            # 0 means do not store messages at all. so we have to choose default
-            # expiry, which is here 1 day.
-            expiry = DEFAULT_EXPIRY
-
-        if isinstance(expiry, datetime.timedelta):
-            expiry = self._get_current_datetime() + expiry
-
-        if isinstance(expiry, datetime.datetime):
-            expiry = time.mktime(expiry.timetuple())
-
-        return int(expiry)
-
-    # override if you use funky timezones
-    def _get_current_datetime(self):
-        """ Returns current date and time. """
-        return datetime.datetime.now()
 
     def __getstate__(self):
         """ Returns ``dict`` with ``__init__`` arguments.
@@ -540,7 +540,7 @@ class Result(object):
         5: ('Invalid token size', True, False), # current token has wrong size, skip it and retry
         6: ('Invalid topic size', False, True), # can not happen, we do not send topic, it is part of certificate. bail out.
         7: ('Invalid payload size', False, True), # our payload is probably too big. bail out.
-        8: ('Invalid token', True, False), # our device token is broken, skipt it and retry
+        8: ('Invalid token', True, False), # our device token is broken, skip it and retry
         10: ('Shutdown', True, False), # server went into maintenance mode. reported token is the last success, skip it and retry.
         None: ('Unknown', True, True), # unknown error, for sure we try again, but user should limit number of retries
     }

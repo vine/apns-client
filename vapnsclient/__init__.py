@@ -22,5 +22,5 @@ __homepage__ = "https://bitbucket.org/sardarnl/apns-client/"
 __copyright__ = 'Copyright 2014 Sardar Yumatov'
 
 
-from vapnsclient.apns import APNs, Message
+from vapnsclient.apns import APNs, Message, SingleTokenPayloadMessage, GenericMessageGroup
 from vapnsclient.transport import Session

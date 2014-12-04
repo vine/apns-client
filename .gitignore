@@ -1,0 +1,3 @@
+*/*.pyc
+vapns_client.egg-info/
+dist/
