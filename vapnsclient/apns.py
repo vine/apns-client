@@ -463,7 +463,6 @@ class GenericBatch(object):
     def __iter__(self):
         """ Iterate over serialized chunks. """
         messages = []
-        buf = 0
         sent = 0
 
         # for all registration ids
@@ -472,26 +471,32 @@ class GenericBatch(object):
             # |COMMAND|FRAME-LEN|{token}|{payload}|{id:4}|{expiry:4}|{priority:1}
             frame_len = 3*5 + len(tok) + len(payload) + 4 + 4 + 1 # 5 items, each 3 bytes prefix, then each item length
             fmt = ">BIBH{0}sBH{1}sBHIBHIBHB".format(len(tok), len(payload))
-            message = pack(fmt, self.VERSION, frame_len,
-                    1, len(tok), tok,
-                    2, len(payload), payload,
-                    3, 4, idx,
-                    4, 4, self.expiry,
-                    5, 1, self.priority)
+            message = pack(
+                fmt, self.VERSION, frame_len,
+                1, len(tok), tok,
+                2, len(payload), payload,
+                3, 4, idx,
+                4, 4, self.expiry,
+                5, 1, self.priority)
 
             messages.append(message)
+
+        buf = 0
+        message_batch = []
+        for idx, message in enumerate(messages):
+            message_batch.append(message)
             buf += len(message)
             if buf >= self.packet_size:
-                chunk = six.b("").join(messages)
+                chunk = six.b("").join(message_batch)
                 buf = 0
                 prev_sent = sent
-                sent += len(messages)
-                messages = []
+                sent += len(message_batch)
+                message_batch = []
                 yield prev_sent, chunk
 
         # last small chunk
-        if messages:
-            yield sent, six.b("").join(messages)
+        if message_batch:
+            yield sent, six.b("").join(message_batch)
 
 class CumberBatch(GenericBatch):
     def __init__(self, messages, expiry, priority, packet_size):
